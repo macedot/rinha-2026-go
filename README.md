@@ -7,13 +7,12 @@
   <img src="https://img.shields.io/badge/Go-1.24-00ADD8?logo=go&logoColor=white" alt="Go" />
   <img src="https://img.shields.io/badge/C-AVX2-00599C?logo=c&logoColor=white" alt="C/AVX2" />
   <img src="https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white" alt="Docker" />
-  <img src="https://img.shields.io/badge/p99-0.99ms-4ade80" alt="p99 latency" />
-  <img src="https://img.shields.io/badge/score-6000-4ade80" alt="Score" />
+  <img src="https://img.shields.io/badge/p99-27µs-4ade80" alt="p99 latency" />
 </p>
 
 ---
 
-**Submission for [Rinha de Backend 2026](https://github.com/zanfranceschi/rinha-de-backend-2026)** — fraud detection via vector search. Processes card transactions through a 14-dimensional feature vectorizer, searches 3 million reference vectors using IVF/K-means with AVX2-accelerated Euclidean distance, and returns fraud probability via k-NN majority vote.
+**Submission for [Rinha de Backend 2026](https://github.com/zanfranceschi/rinha-de-backend-2026)** — fraud detection via vector search. Processes card transactions through a 14-dimensional feature vectorizer and searches 3 million reference vectors using IVF/K-means with AVX2-accelerated Euclidean distance via CGo bridge.
 
 ## Quick Start
 
@@ -21,12 +20,7 @@
 docker compose up --build
 ```
 
-The API listens on port `9999`. Use the smoke test to verify:
-
-```bash
-# Requires k6 (https://k6.io)
-cd test && k6 run smoke.js
-```
+The API listens on port `9999`.
 
 ### Pre-built images (from GitHub release)
 
@@ -60,8 +54,6 @@ Returns `200 OK` when the API has loaded the index and is ready to serve.
 ```json
 { "approved": true, "fraud_score": 0.0000 }
 ```
-
-Full API contract: [docs/en/API.md](https://github.com/zanfranceschi/rinha-de-backend-2026/blob/main/docs/en/API.md)
 
 ## Architecture
 
@@ -108,37 +100,22 @@ Full API contract: [docs/en/API.md](https://github.com/zanfranceschi/rinha-de-ba
 
 ### Request flow
 
-```mermaid
-flowchart LR
-    Client[Client] -->|1. POST /fraud-score| HAProxy[HAProxy :9999]
-    HAProxy -->|2. round-robin UDS| API1[api1]
-    HAProxy -->|2. round-robin UDS| API2[api2]
-    subgraph api [api instance]
-        HTTP[fasthttp] -->|3. parse JSON| VEC[Vectorizer 14-dim]
-        VEC -->|4. int16 quantized| IVF[C/AVX2 IVF Search]
-        IVF -->|5. top-5 k-NN| SCORE[fraud_score]
-    end
-    SCORE -->|6. JSON response| Client
-```
-
-### How it works
-
 1. **Client** sends `POST /fraud-score` with transaction JSON to port `9999`
 2. **HAProxy** round-robin forwards the raw HTTP request over a **Unix Domain Socket** (`/sockets/api1.sock` or `api2.sock`) — zero TCP overhead, no payload inspection
 3. **fasthttp** parses the JSON body (zero-allocation custom parser) and extracts all fields
-4. **Vectorizer** transforms the payload into a 14-dimension float vector using the official normalization formulas, then quantizes to `int16` for the C bridge
-5. **C/AVX2 IVF Search** selects the 4 nearest clusters (out of 1024), scans their points with AVX2-accelerated Euclidean distance (early termination + 2× unroll), and returns the k=5 nearest neighbors
+4. **Vectorizer** transforms the payload into a 14-dimension float vector using the official normalization formulas
+5. **C/AVX2 IVF Search (CGo bridge)** quantizes to `int16`, computes AVX2 centroid distances, selects top-N clusters, and scans AoSoA blocks with AVX2 FMA + early termination + prefetch. Returns k=5 nearest neighbors via two-stage search (fast pass → full pass for ambiguous results)
 6. **fraud_score** = frauds among top 5 / 5; `approved = fraud_score < 0.6`
 
 ### Components
 
 | Component | Language | Role |
 |-----------|----------|------|
-| **HAProxy 3.3** | C | Layer 7 load balancer, round-robin over UDS (`balance roundrobin`) |
+| **HAProxy 3.3** | C | Layer 7 load balancer, round-robin over UDS |
 | **fasthttp server** | Go | HTTP handling, UDS listener, zero-allocation JSON parsing |
-| **Vectorizer** | Go | 14-dim feature vectorizer following official normalization rules; `int16` quantization |
-| **IVF Search bridge** | C/AVX2 | IVF/K-means search: 1024 clusters, centroid distance ranking, bounding-box pruning, AVX2 Euclidean distance with early termination and 2× loop unrolling |
-| **build_index** | Go | Pre-processes `references.json.gz` (3M vectors) into IVF6 binary index: K-means clustering, `int16` quantization, column-major layout, per-cluster bounding boxes |
+| **Vectorizer** | Go | 14-dim feature vectorizer following official normalization rules |
+| **IVF Search bridge** | C/AVX2 (CGo) | IVF/K-means search: 1024 clusters, AVX2 centroid distance with FMA, AVX2 top-N cluster selection, AVX2 AoSoA block scan with early termination + prefetch, two-stage adaptive search |
+| **build_index** | Go | Pre-processes `references.json.gz` (3M vectors) into IVF7 binary index: K-means clustering, `int16` quantization, transposed centroids, AoSoA block layout |
 
 ### Transport
 
@@ -147,7 +124,7 @@ HAProxy communicates with the API instances via **Unix Domain Sockets** on a `tm
 ### Tech Stack
 
 - **Go 1.24** — fasthttp HTTP server, UDS transport, custom zero-alloc JSON parser
-- **C (CGO)** — AVX2 intrinsics for Euclidean distance, IVF/K-means search engine
+- **C/AVX2 (CGo)** — AVX2 intrinsics for centroid distance (FMA), top-N selection, AoSoA block scan with prefetch and early termination
 - **HAProxy 3.3** — stateless round-robin load balancer
 - **Docker Compose** — 3 services, bridge network, resource limits via `deploy.resources.limits`
 
@@ -157,21 +134,24 @@ The IVF search kernel underwent extensive micro-optimization targeting p99 laten
 
 | Optimization | Impact | Technique |
 |-------------|--------|-----------|
-| **1024 IVF clusters** | -0.25ms p99 | Finer partitioning cuts scanned points from ~58K to ~12K per query |
-| **AVX2 early termination** | -0.06ms | Skip 11 dims for batches where all 8 lanes exceed worst distance after first 3 dims |
-| **2× loop unroll** | -0.05ms | Process 16 elements per iteration with interleaved dimension accumulation to hide memory latency |
-| **Cluster reordering** | -0.03ms | Scan smallest clusters first to tighten `worst_d` sooner, enabling more early termination |
+| **AVX2 centroid distance** | -0.15ms p99 | Vectorized distance calc: 16 centroids/iter with FMA accumulation, transposed centroids for contiguous dim reads |
+| **AVX2 top-N selection** | -0.05ms p99 | Mask-based cluster selection with 8-wide comparisons |
+| **AVX2 AoSoA block scan** | -0.25ms p99 | 8-vector blocks in column-major layout, dim-pair processing with FMA, early termination after 4/7 pairs, software prefetch |
+| **Two-stage search** | -0.10ms p99 | Fast pass with nprobe=8, full pass with nprobe=24 only for ambiguous results (2-3 frauds) |
+| **Cluster reordering** | -0.03ms | Scan smallest clusters first to tighten worst distance sooner |
+| **Transposed centroids** | -0.02ms | Column-major centroid layout for cache-friendly AVX2 loads |
 | **GOGC=100, GOMEMLIMIT=100MiB** | -0.02ms | Tuned GC to avoid stop-the-world pauses under load |
 | **UDS transport** | -0.08ms | HAProxy ↔ API via Unix domain sockets (zero TCP overhead) |
 
-**Overall: 1.56ms → 0.99ms p99 (-36%), score 5806 → 6000 (+194 pts)**
+**Overall: ~1.56ms → ~27µs p99**
 
 ## Configuration
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `IVF_NPROBE` | `4` | Number of IVF clusters to probe per query |
-| `CANDIDATES` | `0` | Max candidates to scan (0 = unlimited + bbox pass) |
+| `IVF_NPROBE` | `32` | Number of clusters probed in fast pass |
+| `IVF_FULL_NPROBE` | `8` | Number of clusters probed in full pass (for ambiguous results) |
+| `CANDIDATES` | `0` | Max candidates to scan (0 = unlimited) |
 | `GOGC` | `100` | Go GC target percentage |
 | `GOMEMLIMIT` | `100MiB` | Go soft memory limit |
 | `AMOUNT_DIVISOR` | `10000` | Normalization constant (max_amount) |
@@ -185,40 +165,37 @@ All normalization constants match the official `normalization.json`.
 ## Repository Structure
 
 ```
-# main branch
 ├── cmd/
-│   ├── server/main.go          # fasthttp API server
-│   └── build_index/main.go     # IVF index builder (K-means + quantization)
+│   ├── server/main.go           # fasthttp API server
+│   ├── build_index/main.go      # IVF7 index builder (K-means + quantization + AoSoA packing)
+│   └── bench/main.go            # Latency benchmark with p99 + instrumentation
 ├── internal/
-│   ├── config/config.go        # Environment-based configuration
+│   ├── config/config.go         # Environment-based configuration
 │   ├── vectorizer/vectorizer.go # 14-dim feature vectorizer
 │   ├── ivfsearch/
-│   │   ├── bridge.c            # C/AVX2 IVF search kernel
-│   │   ├── bridge.h            # CGO bridge header
-│   │   ├── bridge.go           # CGO Go bindings
-│   │   └── ivfsearch.go        # Go search interface
-│   ├── jsonparse/jsonparse.go  # Zero-allocation JSON parser
-│   ├── mccrisk/mccrisk.go      # MCC risk lookup table
-│   └── httpresp/httpresp.go    # Pre-computed HTTP responses
+│   │   ├── bridge.c             # C/AVX2 IVF search kernel (centroids + top-N + AoSoA scan)
+│   │   ├── bridge.h             # C bridge header
+│   │   ├── bridge.go            # CGo Go bindings
+│   │   └── ivfsearch.go         # Shared constants
+│   ├── jsonparse/jsonparse.go   # Zero-allocation JSON parser
+│   ├── mccrisk/mccrisk.go       # MCC risk lookup table
+│   └── httpresp/httpresp.go     # Pre-computed HTTP responses
 ├── resources/
-│   ├── index.bin               # Pre-built IVF6 index (3M vectors, 1024 clusters)
-│   ├── mcc_risk.json           # Merchant category risk table
-│   ├── references.json.gz      # 3M labeled reference vectors (input to build_index)
-│   └── example-payloads.json   # Example transaction payloads
-├── test/
-│   ├── test.js                 # k6 load test (ramping arrival rate)
-│   ├── smoke.js                # Quick smoke test (5 iterations)
-│   └── test-data.json          # 54,100 test transactions
-├── Dockerfile                  # Multi-stage: Go build → slim Debian runtime
-├── docker-compose.yml          # 3-service deployment with resource limits
-├── haproxy.cfg                 # HAProxy round-robin UDS configuration
+│   ├── index.bin                # Pre-built IVF7 index (3M vectors, 1024 clusters, 84MB)
+│   ├── mcc_risk.json            # Merchant category risk table
+│   ├── references.json.gz       # 3M labeled reference vectors (input to build_index)
+│   ├── example-payloads.json    # Example transaction payloads
+│   └── example-references.json  # Example reference vectors
+├── Dockerfile                   # Multi-stage: Go build → slim Debian runtime
+├── docker-compose.yml           # 3-service deployment with resource limits
+├── haproxy.cfg                  # HAProxy round-robin UDS configuration
 ├── .github/workflows/release.yml # CI: build & push Docker image to GHCR
-├── LICENSE                     # MIT
-├── info.json                   # Rinha participant info
+├── LICENSE                      # MIT
+├── info.json                    # Rinha participant info
 └── README.md
 ```
 
-> The `submission` branch contains only `docker-compose.yml`, `haproxy.cfg`, and `info.json` — no source code.
+> The `submission` branch contains only `docker-compose.yml`, `haproxy.cfg`, and `info.json` — no source code. It references the pre-built `ghcr.io/macedot/rinha-2026-go:latest` image.
 
 ## CI/CD
 
