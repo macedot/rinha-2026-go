@@ -1,6 +1,6 @@
 <h1 align="center">Rinha de Backend 2026 — Go + C/AVX2</h1>
 
-<p align="center"><strong>Fraud detection API using IVF vector search with hand-tuned AVX2 kernels</strong></p>
+<p align="center"><strong>API de detecção de fraude com busca vetorial IVF usando kernels AVX2 otimizados à mão</strong></p>
 
 <p align="center">
   <img src="https://img.shields.io/github/license/macedot/rinha-2026-go?color=blue" alt="License" />
@@ -12,33 +12,33 @@
 
 ---
 
-**Submission for [Rinha de Backend 2026](https://github.com/zanfranceschi/rinha-de-backend-2026)** — fraud detection via vector search. Processes card transactions through a 14-dimensional feature vectorizer and searches 3 million reference vectors using IVF/K-means with AVX2-accelerated Euclidean distance via CGo bridge.
+**Submissão para a [Rinha de Backend 2026](https://github.com/zanfranceschi/rinha-de-backend-2026)** — detecção de fraude via busca vetorial. Processa transações de cartão através de um vetorizador de 14 dimensões e busca em 3 milhões de vetores de referência usando IVF/K-means com distância Euclidiana acelerada por AVX2 via ponte CGo.
 
-## Quick Start
+## Início Rápido
 
 ```bash
 docker compose up --build
 ```
 
-The API listens on port `9999`.
+A API escuta na porta `9999`.
 
-### Pre-built images (from GitHub release)
+### Imagens pré-compiladas (do release do GitHub)
 
 ```bash
 IMAGE=ghcr.io/macedot/rinha-2026-go:latest docker compose up
 ```
 
-Replace `build: .` with `image: ghcr.io/macedot/rinha-2026-go:latest` in `docker-compose.yml`.
+Substitua `build: .` por `image: ghcr.io/macedot/rinha-2026-go:latest` no `docker-compose.yml`.
 
 ## API
 
 ### `GET /ready`
 
-Returns `200 OK` when the API has loaded the index and is ready to serve.
+Retorna `200 OK` quando a API carregou o índice e está pronta para servir.
 
 ### `POST /fraud-score`
 
-**Request:**
+**Requisição:**
 ```json
 {
   "id": "tx-1329056812",
@@ -50,16 +50,16 @@ Returns `200 OK` when the API has loaded the index and is ready to serve.
 }
 ```
 
-**Response:**
+**Resposta:**
 ```json
 { "approved": true, "fraud_score": 0.0000 }
 ```
 
-## Architecture
+## Arquitetura
 
 ```
                            ┌──────────┐
-                           │  Client  │
+                           │  Cliente │
                            └─────┬────┘
                                  │ HTTP :9999
                           ┌──────▼────────┐
@@ -77,134 +77,134 @@ Returns `200 OK` when the API has loaded the index and is ready to serve.
                    │             │ │             │
                    │┌───────────┐│ │┌───────────┐│
                    ││ fasthttp  ││ ││ fasthttp  ││
-                   ││ UDS server││ ││ UDS server││
+                   ││ serv. UDS ││ ││ serv. UDS ││
                    │└─────┬─────┘│ │└─────┬─────┘│
                    │      │      │ │      │      │
                    │┌─────▼─────┐│ │┌─────▼─────┐│
-                   ││ Vectorizer││ ││ Vectorizer││
-                   ││ 14-dim    ││ ││ 14-dim    ││
+                   ││ Vetoriz.  ││ ││ Vetoriz.  ││
+                   ││ 14 dim.   ││ ││ 14 dim.   ││
                    │└─────┬─────┘│ │└─────┬─────┘│
                    │      │      │ │      │      │
                    │┌─────▼─────┐│ │┌─────▼─────┐│
                    ││ C/AVX2    ││ ││ C/AVX2    ││
-                   ││ IVF Search││ ││ IVF Search││
+                   ││ Busca IVF ││ ││ Busca IVF ││
                    ││ 1024 cls. ││ ││ 1024 cls. ││
                    │└───────────┘│ │└───────────┘│
                    └─────────────┘ └─────────────┘
 
     ┌──────────────────────────────────────────────────────┐
-    │  rinha-sockets (tmpfs, 10mb)  ·  bridge network      │
-    │  CPU total: 1.0   |   Memory total: 350 MB           │
+    │  rinha-sockets (tmpfs, 10mb)  ·  rede bridge         │
+    │  CPU total: 1.0   |   Memória total: 350 MB          │
     └──────────────────────────────────────────────────────┘
 ```
 
-### Request flow
+### Fluxo da requisição
 
-1. **Client** sends `POST /fraud-score` with transaction JSON to port `9999`
-2. **HAProxy** round-robin forwards the raw HTTP request over a **Unix Domain Socket** (`/sockets/api1.sock` or `api2.sock`) — zero TCP overhead, no payload inspection
-3. **fasthttp** parses the JSON body (zero-allocation custom parser) and extracts all fields
-4. **Vectorizer** transforms the payload into a 14-dimension float vector using the official normalization formulas
-5. **C/AVX2 IVF Search (CGo bridge)** quantizes to `int16`, computes AVX2 centroid distances, selects top-N clusters, and scans AoSoA blocks with AVX2 FMA + early termination + prefetch. Returns k=5 nearest neighbors via two-stage search (fast pass → full pass for ambiguous results)
-6. **fraud_score** = frauds among top 5 / 5; `approved = fraud_score < 0.6`
+1. **Cliente** envia `POST /fraud-score` com JSON da transação para a porta `9999`
+2. **HAProxy** faz round-robin do payload HTTP bruto sobre **Unix Domain Socket** (`/sockets/api1.sock` ou `api2.sock`) — zero overhead de TCP, sem inspeção de payload
+3. **fasthttp** faz o parse do JSON (parser customizado sem alocação) e extrai todos os campos
+4. **Vetorizador** transforma o payload em um vetor float de 14 dimensões usando as fórmulas oficiais de normalização
+5. **Busca IVF C/AVX2 (ponte CGo)** quantiza para `int16`, calcula distâncias dos centroides com AVX2, seleciona top-N clusters e varre blocos AoSoA com AVX2 FMA + early termination + prefetch. Retorna k=5 vizinhos mais próximos via busca em dois estágios (passada rápida → passada completa para resultados ambíguos)
+6. **fraud_score** = fraudes entre os top 5 / 5; `approved = fraud_score < 0.6`
 
-### Components
+### Componentes
 
-| Component | Language | Role |
+| Componente | Linguagem | Função |
 |-----------|----------|------|
-| **HAProxy 3.3** | C | Layer 7 load balancer, round-robin over UDS |
-| **fasthttp server** | Go | HTTP handling, UDS listener, zero-allocation JSON parsing |
-| **Vectorizer** | Go | 14-dim feature vectorizer following official normalization rules |
-| **IVF Search bridge** | C/AVX2 (CGo) | IVF/K-means search: 1024 clusters, AVX2 centroid distance with FMA, AVX2 top-N cluster selection, AVX2 AoSoA block scan with early termination + prefetch, two-stage adaptive search |
-| **build_index** | Go | Pre-processes `references.json.gz` (3M vectors) into IVF7 binary index: K-means clustering, `int16` quantization, transposed centroids, AoSoA block layout |
+| **HAProxy 3.3** | C | Balanceador de carga layer 7, round-robin sobre UDS |
+| **servidor fasthttp** | Go | Manipulação HTTP, listener UDS, parser JSON sem alocação |
+| **Vetorizador** | Go | Vetorizador de features 14-dim seguindo regras oficiais de normalização |
+| **Ponte de busca IVF** | C/AVX2 (CGo) | Busca IVF/K-means: 1024 clusters, distância de centroides AVX2 com FMA, seleção top-N de clusters com AVX2, varredura de blocos AoSoA com AVX2 + early termination + prefetch, busca adaptativa em dois estágios |
+| **build_index** | Go | Pré-processa `references.json.gz` (3M vetores) em índice binário IVF7: clusterização K-means, quantização `int16`, centroides transpostos, layout de blocos AoSoA |
 
-### Transport
+### Transporte
 
-HAProxy communicates with the API instances via **Unix Domain Sockets** on a `tmpfs` volume (`rinha-sockets`). This eliminates TCP overhead entirely — no kernel network stack, no socket buffers, no accept queues. A single 10 MB tmpfs volume holds both API socket files.
+O HAProxy se comunica com as instâncias da API via **Unix Domain Sockets** em um volume `tmpfs` (`rinha-sockets`). Isso elimina completamente o overhead de TCP — sem pilha de rede do kernel, sem buffers de socket, sem filas de accept. Um único volume tmpfs de 10 MB comporta ambos os arquivos de socket da API.
 
-### Tech Stack
+### Stack Tecnológico
 
-- **Go 1.24** — fasthttp HTTP server, UDS transport, custom zero-alloc JSON parser
-- **C/AVX2 (CGo)** — AVX2 intrinsics for centroid distance (FMA), top-N selection, AoSoA block scan with prefetch and early termination
-- **HAProxy 3.3** — stateless round-robin load balancer
-- **Docker Compose** — 3 services, bridge network, resource limits via `deploy.resources.limits`
+- **Go 1.24** — servidor HTTP fasthttp, transporte UDS, parser JSON customizado zero-alocação
+- **C/AVX2 (CGo)** — intrínsecos AVX2 para distância de centroides (FMA), seleção top-N, varredura de blocos AoSoA com prefetch e early termination
+- **HAProxy 3.3** — balanceador de carga stateless round-robin
+- **Docker Compose** — 3 serviços, rede bridge, limites de recursos via `deploy.resources.limits`
 
-## Optimization Highlights
+## Destaques de Otimização
 
-The IVF search kernel underwent extensive micro-optimization targeting p99 latency on a [Mac Mini Late 2014](https://support.apple.com/en-us/111931) (2.6 GHz Haswell, 8 GB RAM) with Docker resource limits of 1.0 CPU and 350 MB total memory.
+O kernel de busca IVF passou por micro-otimizações extensivas visando latência p99 em um [Mac Mini Late 2014](https://support.apple.com/en-us/111931) (2.6 GHz Haswell, 8 GB RAM) com limites Docker de 1.0 CPU e 350 MB de memória total.
 
-| Optimization | Impact | Technique |
+| Otimização | Impacto | Técnica |
 |-------------|--------|-----------|
-| **AVX2 centroid distance** | -0.15ms p99 | Vectorized distance calc: 16 centroids/iter with FMA accumulation, transposed centroids for contiguous dim reads |
-| **AVX2 top-N selection** | -0.05ms p99 | Mask-based cluster selection with 8-wide comparisons |
-| **AVX2 AoSoA block scan** | -0.25ms p99 | 8-vector blocks in column-major layout, dim-pair processing with FMA, early termination after 4/7 pairs, software prefetch |
-| **Two-stage search** | -0.10ms p99 | Fast pass with nprobe=8, full pass with nprobe=24 only for ambiguous results (2-3 frauds) |
-| **Cluster reordering** | -0.03ms | Scan smallest clusters first to tighten worst distance sooner |
-| **Transposed centroids** | -0.02ms | Column-major centroid layout for cache-friendly AVX2 loads |
-| **GOGC=100, GOMEMLIMIT=100MiB** | -0.02ms | Tuned GC to avoid stop-the-world pauses under load |
-| **UDS transport** | -0.08ms | HAProxy ↔ API via Unix domain sockets (zero TCP overhead) |
+| **Distância de centroides AVX2** | -0.15ms p99 | Cálculo vetorizado de distância: 16 centroides/iter com acumulação FMA, centroides transpostos para leituras contíguas de dimensão |
+| **Seleção top-N AVX2** | -0.05ms p99 | Seleção de clusters baseada em máscara com comparações de 8 vias |
+| **Varredura de blocos AoSoA AVX2** | -0.25ms p99 | Blocos de 8 vetores em layout column-major, processamento de pares de dimensão com FMA, early termination após 4/7 pares, prefetch por software |
+| **Busca em dois estágios** | -0.10ms p99 | Passada rápida com nprobe=8, passada completa com nprobe=24 apenas para resultados ambíguos (2-3 fraudes) |
+| **Reordenação de clusters** | -0.03ms | Varre primeiro os clusters menores para apertar a pior distância mais cedo |
+| **Centroides transpostos** | -0.02ms | Layout column-major dos centroides para cargas AVX2 cache-friendly |
+| **GOGC=100, GOMEMLIMIT=100MiB** | -0.02ms | GC ajustado para evitar pausas stop-the-world sob carga |
+| **Transporte UDS** | -0.08ms | HAProxy ↔ API via Unix domain sockets (zero overhead de TCP) |
 
-**Overall: ~1.56ms → ~27µs p99**
+**Total: ~1.56ms → ~27µs p99**
 
-## Configuration
+## Configuração
 
-| Variable | Default | Description |
+| Variável | Padrão | Descrição |
 |----------|---------|-------------|
-| `IVF_NPROBE` | `32` | Number of clusters probed in fast pass |
-| `IVF_FULL_NPROBE` | `8` | Number of clusters probed in full pass (for ambiguous results) |
-| `CANDIDATES` | `0` | Max candidates to scan (0 = unlimited) |
-| `GOGC` | `100` | Go GC target percentage |
-| `GOMEMLIMIT` | `100MiB` | Go soft memory limit |
-| `AMOUNT_DIVISOR` | `10000` | Normalization constant (max_amount) |
-| `INSTALLMENTS_DIVISOR` | `12` | Normalization constant (max_installments) |
-| `TX24H_DIVISOR` | `20` | Normalization constant (max_tx_count_24h) |
-| `KM_DIVISOR` | `1000` | Normalization constant (max_km) |
-| `MERCHANT_AMOUNT_DIVISOR` | `10000` | Normalization constant (max_merchant_avg_amount) |
+| `IVF_NPROBE` | `32` | Número de clusters sondados na passada rápida |
+| `IVF_FULL_NPROBE` | `8` | Número de clusters sondados na passada completa (resultados ambíguos) |
+| `CANDIDATES` | `0` | Máximo de candidatos a varrer (0 = ilimitado) |
+| `GOGC` | `100` | Percentual alvo do GC do Go |
+| `GOMEMLIMIT` | `100MiB` | Limite soft de memória do Go |
+| `AMOUNT_DIVISOR` | `10000` | Constante de normalização (max_amount) |
+| `INSTALLMENTS_DIVISOR` | `12` | Constante de normalização (max_installments) |
+| `TX24H_DIVISOR` | `20` | Constante de normalização (max_tx_count_24h) |
+| `KM_DIVISOR` | `1000` | Constante de normalização (max_km) |
+| `MERCHANT_AMOUNT_DIVISOR` | `10000` | Constante de normalização (max_merchant_avg_amount) |
 
-All normalization constants match the official `normalization.json`.
+Todas as constantes de normalização seguem o `normalization.json` oficial.
 
-## Repository Structure
+## Estrutura do Repositório
 
 ```
 ├── cmd/
-│   ├── server/main.go           # fasthttp API server
-│   ├── build_index/main.go      # IVF7 index builder (K-means + quantization + AoSoA packing)
-│   └── bench/main.go            # Latency benchmark with p99 + instrumentation
+│   ├── server/main.go           # Servidor HTTP fasthttp da API
+│   ├── build_index/main.go      # Construtor do índice IVF7 (K-means + quantização + empacotamento AoSoA)
+│   └── bench/main.go            # Benchmark de latência com p99 + instrumentação
 ├── internal/
-│   ├── config/config.go         # Environment-based configuration
-│   ├── vectorizer/vectorizer.go # 14-dim feature vectorizer
+│   ├── config/config.go         # Configuração por variáveis de ambiente
+│   ├── vectorizer/vectorizer.go # Vetorizador de features 14-dim
 │   ├── ivfsearch/
-│   │   ├── bridge.c             # C/AVX2 IVF search kernel (centroids + top-N + AoSoA scan)
-│   │   ├── bridge.h             # C bridge header
-│   │   ├── bridge.go            # CGo Go bindings
-│   │   └── ivfsearch.go         # Shared constants
-│   ├── jsonparse/jsonparse.go   # Zero-allocation JSON parser
-│   ├── mccrisk/mccrisk.go       # MCC risk lookup table
-│   └── httpresp/httpresp.go     # Pre-computed HTTP responses
+│   │   ├── bridge.c             # Kernel de busca IVF C/AVX2 (centroides + top-N + varredura AoSoA)
+│   │   ├── bridge.h             # Header da ponte C
+│   │   ├── bridge.go            # Bindings CGo para Go
+│   │   └── ivfsearch.go         # Constantes compartilhadas
+│   ├── jsonparse/jsonparse.go   # Parser JSON zero-alocação
+│   ├── mccrisk/mccrisk.go       # Tabela de risco por MCC
+│   └── httpresp/httpresp.go     # Respostas HTTP pré-computadas
 ├── resources/
-│   ├── index.bin                # Pre-built IVF7 index (3M vectors, 1024 clusters, 84MB)
-│   ├── mcc_risk.json            # Merchant category risk table
-│   ├── references.json.gz       # 3M labeled reference vectors (input to build_index)
-│   ├── example-payloads.json    # Example transaction payloads
-│   └── example-references.json  # Example reference vectors
-├── Dockerfile                   # Multi-stage: Go build → slim Debian runtime
-├── docker-compose.yml           # 3-service deployment with resource limits
-├── haproxy.cfg                  # HAProxy round-robin UDS configuration
-├── .github/workflows/release.yml # CI: build & push Docker image to GHCR
+│   ├── index.bin                # Índice IVF7 pré-construído (3M vetores, 1024 clusters, ~84MB)
+│   ├── mcc_risk.json            # Tabela de risco por categoria de estabelecimento
+│   ├── references.json.gz       # 3M vetores de referência rotulados (entrada do build_index)
+│   ├── example-payloads.json    # Exemplos de payloads de transação
+│   └── example-references.json  # Exemplos de vetores de referência
+├── Dockerfile                   # Multi-estágio: build Go → runtime Debian slim
+├── docker-compose.yml           # Deploy de 3 serviços com limites de recursos
+├── haproxy.cfg                  # Configuração de UDS round-robin do HAProxy
+├── .github/workflows/release.yml # CI: build & push da imagem Docker para GHCR
 ├── LICENSE                      # MIT
-├── info.json                    # Rinha participant info
+├── info.json                    # Dados do participante da Rinha
 └── README.md
 ```
 
-> The `submission` branch contains only `docker-compose.yml`, `haproxy.cfg`, and `info.json` — no source code. It references the pre-built `ghcr.io/macedot/rinha-2026-go:latest` image.
+> O branch `submission` contém apenas `docker-compose.yml`, `haproxy.cfg` e `info.json` — sem código fonte. Ele referencia a imagem pré-compilada `ghcr.io/macedot/rinha-2026-go:latest`.
 
 ## CI/CD
 
-GitHub Actions builds and pushes a `linux/amd64` Docker image to `ghcr.io/macedot/rinha-2026-go` on every published release (prereleases excluded). Images are tagged with both the release version and `latest`.
+GitHub Actions compila e publica uma imagem Docker `linux/amd64` em `ghcr.io/macedot/rinha-2026-go` a cada release publicado (excluindo pre-releases). As imagens são tagueadas com a versão do release e `latest`.
 
-## Test Environment
+## Ambiente de Teste
 
-The official test runs on a Mac Mini Late 2014 (2.6 GHz Haswell, 8 GB RAM, Ubuntu 24.04) with Docker resource limits of **1.0 CPU** and **350 MB memory** across all services. All optimizations were tuned specifically for this hardware.
+O teste oficial executa em um Mac Mini Late 2014 (2.6 GHz Haswell, 8 GB RAM, Ubuntu 24.04) com limites Docker de **1.0 CPU** e **350 MB de memória** entre todos os serviços. Todas as otimizações foram ajustadas especificamente para este hardware.
 
-## License
+## Licença
 
-This project is licensed under the [MIT License](LICENSE).
+Este projeto está licenciado sob a [Licença MIT](LICENSE).
