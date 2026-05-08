@@ -26,9 +26,4 @@
 !resources/*.gz
 
 # Scripts
-!profile.sh
 !autoresearch.sh
-
-# Generated artifacts (always ignore even if tracked)
-**/default.pgo
-cpu.pprof
