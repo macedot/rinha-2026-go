@@ -12,7 +12,7 @@
 
 ---
 
-**Submissão para a [Rinha de Backend 2026](https://github.com/zanfranceschi/rinha-de-backend-2026)** — detecção de fraude via busca vetorial. Processa transações de cartão através de um vetorizador de 14 dimensões e busca em 3 milhões de vetores de referência usando IVF/K-means com distância Euclidiana acelerada por AVX2 via ponte CGo.
+**Submissão para a [Rinha de Backend 2026](https://github.com/zanfranceschi/rinha-de-backend-2026)** — detecção de fraude via busca vetorial. Processa transações de cartão através de um vetorizador de 14 dimensões e busca em 3 milhões de vetores de referência usando IVF/K-means (4096 clusters) com distância Euclidiana acelerada por AVX2 via ponte CGo.
 
 ## Início Rápido
 
@@ -88,7 +88,7 @@ Retorna `200 OK` quando a API carregou o índice e está pronta para servir.
                    │┌─────▼─────┐│ │┌─────▼─────┐│
                    ││ C/AVX2    ││ ││ C/AVX2    ││
                    ││ Busca IVF ││ ││ Busca IVF ││
-                   ││ 1024 cls. ││ ││ 1024 cls. ││
+                   ││ 4096 cls. ││ ││ 4096 cls. ││
                    │└───────────┘│ │└───────────┘│
                    └─────────────┘ └─────────────┘
 
@@ -114,8 +114,8 @@ Retorna `200 OK` quando a API carregou o índice e está pronta para servir.
 | **HAProxy 3.3** | C | Balanceador de carga layer 7, round-robin sobre UDS |
 | **servidor fasthttp** | Go | Manipulação HTTP, listener UDS, parser JSON sem alocação |
 | **Vetorizador** | Go | Vetorizador de features 14-dim seguindo regras oficiais de normalização |
-| **Ponte de busca IVF** | C/AVX2 (CGo) | Busca IVF/K-means: 1024 clusters, distância de centroides AVX2 com FMA, seleção top-N de clusters com AVX2, varredura de blocos AoSoA com AVX2 + early termination + prefetch, busca adaptativa em dois estágios |
-| **build_index** | Go | Pré-processa `references.json.gz` (3M vetores) em índice binário IVF7: clusterização K-means, quantização `int16`, centroides transpostos, layout de blocos AoSoA |
+| **Ponte de busca IVF** | C/AVX2 (CGo) | Busca IVF/K-means: 4096 clusters, distância de centroides AVX2 com FMA, seleção top-N de clusters com AVX2, varredura de blocos AoSoA com AVX2 + early termination + prefetch, busca adaptativa em dois estágios |
+| **build_index** | Go | Pré-processa `references.json.gz` (3M vetores) em índice binário IVF1: clusterização K-means, quantização `int16`, centroides transpostos, layout de blocos AoSoA |
 
 ### Transporte
 
@@ -149,8 +149,8 @@ O kernel de busca IVF passou por micro-otimizações extensivas visando latênci
 
 | Variável | Padrão | Descrição |
 |----------|---------|-------------|
-| `IVF_NPROBE` | `32` | Número de clusters sondados na passada rápida |
-| `IVF_FULL_NPROBE` | `8` | Número de clusters sondados na passada completa (resultados ambíguos) |
+| `IVF_NPROBE` | `8` | Número de clusters sondados na passada rápida |
+| `IVF_FULL_NPROBE` | `24` | Número de clusters sondados na passada completa (resultados ambíguos) |
 | `CANDIDATES` | `0` | Máximo de candidatos a varrer (0 = ilimitado) |
 | `GOGC` | `100` | Percentual alvo do GC do Go |
 | `GOMEMLIMIT` | `100MiB` | Limite soft de memória do Go |
@@ -167,7 +167,7 @@ Todas as constantes de normalização seguem o `normalization.json` oficial.
 ```
 ├── cmd/
 │   ├── server/main.go           # Servidor HTTP fasthttp da API
-│   ├── build_index/main.go      # Construtor do índice IVF7 (K-means + quantização + empacotamento AoSoA)
+│   ├── build_index/main.go      # Construtor do índice IVF1 (K-means + quantização + empacotamento AoSoA)
 │   └── bench/main.go            # Benchmark de latência com p99 + instrumentação
 ├── internal/
 │   ├── config/config.go         # Configuração por variáveis de ambiente
@@ -181,7 +181,7 @@ Todas as constantes de normalização seguem o `normalization.json` oficial.
 │   ├── mccrisk/mccrisk.go       # Tabela de risco por MCC
 │   └── httpresp/httpresp.go     # Respostas HTTP pré-computadas
 ├── resources/
-│   ├── index.bin                # Índice IVF7 pré-construído (3M vetores, 1024 clusters, ~84MB)
+│   ├── index.bin                # Índice IVF1 pré-construído (3M vetores, 4096 clusters, ~84MB)
 │   ├── mcc_risk.json            # Tabela de risco por categoria de estabelecimento
 │   ├── references.json.gz       # 3M vetores de referência rotulados (entrada do build_index)
 │   ├── example-payloads.json    # Exemplos de payloads de transação
@@ -195,7 +195,7 @@ Todas as constantes de normalização seguem o `normalization.json` oficial.
 └── README.md
 ```
 
-> O branch `submission` contém apenas `docker-compose.yml`, `haproxy.cfg` e `info.json` — sem código fonte. Ele referencia a imagem pré-compilada `ghcr.io/macedot/rinha-2026-go:latest`.
+> O branch `submission` contém `docker-compose.yml`, `haproxy.cfg`, `info.json` e recursos — referenciando a imagem pré-compilada `ghcr.io/macedot/rinha-2026-go:latest`.
 
 ## CI/CD
 
@@ -204,6 +204,10 @@ GitHub Actions compila e publica uma imagem Docker `linux/amd64` em `ghcr.io/mac
 ## Ambiente de Teste
 
 O teste oficial executa em um Mac Mini Late 2014 (2.6 GHz Haswell, 8 GB RAM, Ubuntu 24.04) com limites Docker de **1.0 CPU** e **350 MB de memória** entre todos os serviços. Todas as otimizações foram ajustadas especificamente para este hardware.
+
+## Agradecimentos
+
+O kernel de busca IVF em C/AVX2 (`internal/ivfsearch/bridge.c`) é uma migração adaptada do excelente trabalho do [Jairo Blatt](https://github.com/jairoblatt) no projeto [rinha-2026-rust](https://github.com/jairoblatt/rinha-2026-rust). Obrigado pelo kernels de alta performance e pela inspiração.
 
 ## Licença
 

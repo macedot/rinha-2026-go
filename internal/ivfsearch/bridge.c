@@ -45,8 +45,8 @@ void rinha_reset_inst(void) {
 #define K_NEIGHBORS 5
 #define FIX_SCALE 10000.0f
 #define VECTOR_SCALE (1.0f / FIX_SCALE)
-#define IVF_CLUSTERS 1024
-#define IVF_MAX_NPROBE 512
+#define IVF_CLUSTERS 4096
+#define IVF_MAX_NPROBE 64
 #define CACHELINE 64
 #define BLOCK_STRIDE 112  /* 8 slots * 14 dims */
 
@@ -75,7 +75,7 @@ static inline int16_t quantize_fixed(float x) {
     return (int16_t)scaled;
 }
 
-/* Dataset: IVF7 AoSoA layout (compatible with Go build_index)
+/* Dataset: IVF1 AoSoA layout
  *
  * centroids_t[dim][cluster]: float, transposed column-major (dim-major)
  *   - centroid distance reads dim0 of all clusters contiguously, then dim1, etc.
@@ -107,24 +107,17 @@ int rinha_load_index(const char *path) {
     if (!f) { perror(path); return -1; }
 
     char magic[4];
-    uint32_t n = 0, k = 0, d = 0, stride = 0;
-    float scale = 0.0f;
-    if (read_exact(f, magic, 4) != 0 || memcmp(magic, "IVF7", 4) != 0 ||
+    uint32_t n = 0, k = 0, d = 0;
+    if (read_exact(f, magic, 4) != 0 || memcmp(magic, "IVF1", 4) != 0 ||
         read_exact(f, &n, sizeof(n)) != 0 ||
         read_exact(f, &k, sizeof(k)) != 0 ||
-        read_exact(f, &d, sizeof(d)) != 0 ||
-        read_exact(f, &stride, sizeof(stride)) != 0 ||
-        read_exact(f, &scale, sizeof(scale)) != 0) {
-        fprintf(stderr, "index invalido ou magic != IVF7: %s\n", path);
+        read_exact(f, &d, sizeof(d)) != 0) {
+        fprintf(stderr, "index invalido ou magic != IVF1: %s\n", path);
         fclose(f); return -1;
     }
 
-    if (k != IVF_CLUSTERS || d != DIM || stride != DIM) {
-        fprintf(stderr, "index incompativel: K=%u D=%u stride=%u\n", k, d, stride);
-        fclose(f); return -1;
-    }
-    if (fabsf(scale - FIX_SCALE) > 0.01f) {
-        fprintf(stderr, "index incompativel: scale=%f\n", scale);
+    if (k != IVF_CLUSTERS || d != DIM) {
+        fprintf(stderr, "index incompativel: K=%u D=%u\n", k, d);
         fclose(f); return -1;
     }
 
@@ -171,10 +164,10 @@ int rinha_load_index(const char *path) {
                  (double)padded_n +
                  (double)DIM * IVF_CLUSTERS * sizeof(float) +
                  (double)(IVF_CLUSTERS + 1) * sizeof(uint32_t)) / (1024.0 * 1024.0);
-    fprintf(stderr, "index IVF7 carregado (C bridge): N=%u K=%u blocks=%d memoria=%.2f MB\n",
+    fprintf(stderr, "index IVF1 carregado (C bridge): N=%u K=%u blocks=%d memoria=%.2f MB\n",
         n, k, g_dataset.total_blocks, mb);
 #ifdef __AVX2__
-    fprintf(stderr, "C bridge: AVX2 enabled (AoSoA blocks + centroid dist + top-N)\n");
+    fprintf(stderr, "C bridge: AVX2 enabled (AoSoA blocks + centroid dist)\n");
 #else
     fprintf(stderr, "C bridge: scalar fallback\n");
 #endif
@@ -198,7 +191,6 @@ static inline int worst_index5_f(const float d[5]) {
     return w;
 }
 
-/* Insertion-sort based top-5: maintains sorted order (lowest first) */
 static inline void try_insert_top5_f(float d, uint8_t label,
                                      float best_d[5], uint8_t best_l[5],
                                      int *worst, float *worst_d) {
@@ -239,7 +231,7 @@ static inline void insert_probe_cluster(int cluster, float penalty,
     best_c[pos] = cluster;
 }
 
-/* --- AVX2 centroid distance (process 8 centroids per iter) --- */
+/* --- AVX2 centroid distance (process 16 centroids per iter) --- */
 
 #ifdef __AVX2__
 #include <immintrin.h>

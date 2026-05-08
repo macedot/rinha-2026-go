@@ -29,6 +29,7 @@ x-api-common: &api-common
     MERCHANT_AMOUNT_DIVISOR: "10000"
     GOGC: "100"
     GOMEMLIMIT: "100MiB"
+    PROFILE: "${PROFILE:-}"
 
 services:
   haproxy:

@@ -1,8 +1,34 @@
-.idea/
-*.swp
-*.swo
-*~
-.DS_Store
-*.log
-/build_index
-/server
+# Deny all
+*
+
+# Track source
+!.gitignore
+!LICENSE
+!README.md
+!.github/
+!.github/workflows/
+!.github/workflows/release.yml
+!Dockerfile
+!docker-compose.yml
+!haproxy.cfg
+!info.json
+!go.mod
+!go.sum
+
+!cmd/
+!cmd/**
+!internal/
+!internal/**
+
+!resources/
+!resources/*.json
+!resources/*.bin
+!resources/*.gz
+
+# Scripts
+!profile.sh
+!autoresearch.sh
+
+# Generated artifacts (always ignore even if tracked)
+**/default.pgo
+cpu.pprof

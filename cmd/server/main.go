@@ -5,11 +5,14 @@ import (
 	"log"
 	"net"
 	"os"
+	"os/signal"
 	"rinha-2026/internal/config"
 	"rinha-2026/internal/httpresp"
 	"rinha-2026/internal/ivfsearch"
 	"rinha-2026/internal/mccrisk"
 	"rinha-2026/internal/vectorizer"
+	"runtime/pprof"
+	"syscall"
 
 	"github.com/valyala/fasthttp"
 	"go.uber.org/automaxprocs/maxprocs"
@@ -34,6 +37,35 @@ func main() {
 	}
 	ivfsearch.BridgeSetParams(cfg.IvfNprobe, cfg.IvfFullNprobe, cfg.Candidates)
 
+	// CPU profiling: start if PROFILE env is set
+	profPath := os.Getenv("PROFILE")
+	if profPath == "" {
+		profPath = "/tmp/cpu.pprof"
+	}
+	profFile, profErr := os.Create(profPath)
+	if profErr == nil {
+		if err := pprof.StartCPUProfile(profFile); err != nil {
+			fmt.Fprintf(os.Stderr, "pprof start: %v\n", err)
+			profFile.Close()
+			profFile = nil
+		} else {
+			fmt.Fprintf(os.Stderr, "cpu profiling -> %s\n", profPath)
+		}
+	}
+
+	// Stop profile on SIGTERM/SIGINT
+	go func() {
+		ch := make(chan os.Signal, 1)
+		signal.Notify(ch, os.Interrupt, syscall.SIGTERM)
+		<-ch
+		if profFile != nil {
+			pprof.StopCPUProfile()
+			profFile.Close()
+			fmt.Fprintf(os.Stderr, "cpu profile written to %s\n", profPath)
+		}
+		os.Exit(0)
+	}()
+
 	/* Warm CPU caches with random queries */
 	fmt.Fprintf(os.Stderr, "warming caches...\n")
 	for i := 0; i < 500; i++ {
@@ -47,7 +79,7 @@ func main() {
 	}
 	fmt.Fprintf(os.Stderr, "cache warmup done\n")
 
-	fmt.Fprintf(os.Stderr, "engine: IVF/kmeans + int16 + top5 seco + C/AVX2 bridge\n")
+	fmt.Fprintf(os.Stderr, "engine: IVF/kmeans + int16 + top5 seco + C/AVX2 bridge (K=4096)\n")
 
 	s := &fasthttp.Server{
 		Handler:               handler,

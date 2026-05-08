@@ -13,7 +13,7 @@ import (
 
 const (
 	Dim      = 14
-	IvfK     = 1024
+	IvfK     = 4096
 	FixScale = 10000.0
 )
 
@@ -125,7 +125,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "falha gravando index\n")
 		os.Exit(1)
 	}
-	fmt.Fprintf(os.Stderr, "ok: IVF7 %s (N=%d K=%d blocks=%d padded=%d)\n",
+	fmt.Fprintf(os.Stderr, "ok: IVF1 %s (N=%d K=%d blocks=%d padded=%d)\n",
 		os.Args[2], N, IvfK, totalBlocks, paddedN)
 }
 
@@ -281,12 +281,10 @@ func writeIndexIVF7(path string, n uint32, centroidsT []float32, blockOffsets []
 	}
 	defer f.Close()
 
-	binary.Write(f, binary.LittleEndian, []byte("IVF7"))
+	binary.Write(f, binary.LittleEndian, []byte("IVF1"))
 	binary.Write(f, binary.LittleEndian, n)
 	binary.Write(f, binary.LittleEndian, uint32(IvfK))
 	binary.Write(f, binary.LittleEndian, uint32(Dim))
-	binary.Write(f, binary.LittleEndian, uint32(Dim))
-	binary.Write(f, binary.LittleEndian, float32(FixScale))
 	binary.Write(f, binary.LittleEndian, centroidsT)
 	binary.Write(f, binary.LittleEndian, blockOffsets)
 	binary.Write(f, binary.LittleEndian, outLabels)
