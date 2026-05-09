@@ -31,19 +31,23 @@ x-api-common: &api-common
     GOMEMLIMIT: "100MiB"
 
 services:
-  haproxy:
-    image: haproxy:3.3
-    container_name: rinha-haproxy
+  passa:
+    image: ghcr.io/macedot/passa
+    container_name: rinha-passa
     ports:
       - "9999:9999"
     volumes:
-      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
       - rinha-sockets:/sockets
     depends_on:
       - api1
       - api2
     networks:
       - rinha-net
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      PORT: "9999"
+      UPSTREAMS: "unix:/sockets/api1.sock,unix:/sockets/api2.sock"
     deploy:
       resources:
         limits:
