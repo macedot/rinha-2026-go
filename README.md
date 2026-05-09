@@ -63,7 +63,7 @@ Retorna `200 OK` quando a API carregou o índice e está pronta para servir.
                            └─────┬────┘
                                  │ HTTP :9999
                           ┌──────▼────────┐
-                          │  HAProxy 3.3  │
+                          │    passa      │
                           │  cpus: 0.15   │
                           │  mem:  50 MB  │
                           └───┬───────┬───┘
@@ -93,7 +93,7 @@ Retorna `200 OK` quando a API carregou o índice e está pronta para servir.
                    └─────────────┘ └─────────────┘
 
     ┌──────────────────────────────────────────────────────┐
-    │  rinha-sockets (tmpfs, 10mb)  ·  rede bridge         │
+    │  rinha-go-sockets (tmpfs, 10mb)  ·  rede bridge         │
     │  CPU total: 1.0   |   Memória total: 350 MB          │
     └──────────────────────────────────────────────────────┘
 ```
@@ -101,7 +101,7 @@ Retorna `200 OK` quando a API carregou o índice e está pronta para servir.
 ### Fluxo da requisição
 
 1. **Cliente** envia `POST /fraud-score` com JSON da transação para a porta `9999`
-2. **HAProxy** faz round-robin do payload HTTP bruto sobre **Unix Domain Socket** (`/sockets/api1.sock` ou `api2.sock`) — zero overhead de TCP, sem inspeção de payload
+2. **passa** faz round-robin do payload HTTP bruto sobre **Unix Domain Socket** (`/sockets/api1.sock` ou `api2.sock`) — zero overhead de TCP, sem inspeção de payload
 3. **fasthttp** faz o parse do JSON (parser customizado sem alocação) e extrai todos os campos
 4. **Vetorizador** transforma o payload em um vetor float de 14 dimensões usando as fórmulas oficiais de normalização
 5. **Busca IVF C/AVX2 (ponte CGo)** quantiza para `int16`, calcula distâncias dos centroides com AVX2, seleciona top-N clusters e varre blocos AoSoA com AVX2 FMA + early termination + prefetch. Retorna k=5 vizinhos mais próximos via busca em dois estágios (passada rápida → passada completa para resultados ambíguos)
@@ -111,7 +111,7 @@ Retorna `200 OK` quando a API carregou o índice e está pronta para servir.
 
 | Componente | Linguagem | Função |
 |-----------|----------|------|
-| **HAProxy 3.3** | C | Balanceador de carga layer 7, round-robin sobre UDS |
+| **passa** | Rust | Balanceador de carga layer 7, round-robin sobre UDS |
 | **servidor fasthttp** | Go | Manipulação HTTP, listener UDS, parser JSON sem alocação |
 | **Vetorizador** | Go | Vetorizador de features 14-dim seguindo regras oficiais de normalização |
 | **Ponte de busca IVF** | C/AVX2 (CGo) | Busca IVF/K-means: 4096 clusters, distância de centroides AVX2 com FMA, seleção top-N de clusters com AVX2, varredura de blocos AoSoA com AVX2 + early termination + prefetch, busca adaptativa em dois estágios |
@@ -119,13 +119,13 @@ Retorna `200 OK` quando a API carregou o índice e está pronta para servir.
 
 ### Transporte
 
-O HAProxy se comunica com as instâncias da API via **Unix Domain Sockets** em um volume `tmpfs` (`rinha-sockets`). Isso elimina completamente o overhead de TCP — sem pilha de rede do kernel, sem buffers de socket, sem filas de accept. Um único volume tmpfs de 10 MB comporta ambos os arquivos de socket da API.
+O passa se comunica com as instâncias da API via **Unix Domain Sockets** em um volume `tmpfs` (`rinha-go-sockets`). Isso elimina completamente o overhead de TCP — sem pilha de rede do kernel, sem buffers de socket, sem filas de accept. Um único volume tmpfs de 10 MB comporta ambos os arquivos de socket da API.
 
 ### Stack Tecnológico
 
 - **Go 1.24** — servidor HTTP fasthttp, transporte UDS, parser JSON customizado zero-alocação
 - **C/AVX2 (CGo)** — intrínsecos AVX2 para distância de centroides (FMA), seleção top-N, varredura de blocos AoSoA com prefetch e early termination
-- **HAProxy 3.3** — balanceador de carga stateless round-robin
+- **passa** — balanceador de carga stateless round-robin
 - **Docker Compose** — 3 serviços, rede bridge, limites de recursos via `deploy.resources.limits`
 
 ## Destaques de Otimização
@@ -141,7 +141,7 @@ O kernel de busca IVF passou por micro-otimizações extensivas visando latênci
 | **Reordenação de clusters** | -0.03ms | Varre primeiro os clusters menores para apertar a pior distância mais cedo |
 | **Centroides transpostos** | -0.02ms | Layout column-major dos centroides para cargas AVX2 cache-friendly |
 | **GOGC=100, GOMEMLIMIT=100MiB** | -0.02ms | GC ajustado para evitar pausas stop-the-world sob carga |
-| **Transporte UDS** | -0.08ms | HAProxy ↔ API via Unix domain sockets (zero overhead de TCP) |
+| **Transporte UDS** | -0.08ms | passa ↔ API via Unix domain sockets (zero overhead de TCP) |
 
 **Total: ~1.56ms → ~27µs p99**
 
@@ -188,14 +188,14 @@ Todas as constantes de normalização seguem o `normalization.json` oficial.
 │   └── example-references.json  # Exemplos de vetores de referência
 ├── Dockerfile                   # Multi-estágio: build Go → runtime Debian slim
 ├── docker-compose.yml           # Deploy de 3 serviços com limites de recursos
-├── haproxy.cfg                  # Configuração de UDS round-robin do HAProxy
+├── haproxy.cfg                  # Configuração legada de UDS round-robin do HAProxy
 ├── .github/workflows/release.yml # CI: build & push da imagem Docker para GHCR
 ├── LICENSE                      # MIT
 ├── info.json                    # Dados do participante da Rinha
 └── README.md
 ```
 
-> O branch `submission` contém `docker-compose.yml`, `haproxy.cfg`, `info.json` e recursos — referenciando a imagem pré-compilada `ghcr.io/macedot/rinha-2026-go:latest`.
+> O branch `submission` contém `docker-compose.yml`, `info.json` e recursos — referenciando a imagem pré-compilada `ghcr.io/macedot/rinha-2026-go:latest`.
 
 ## CI/CD
 
