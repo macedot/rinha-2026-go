@@ -1,6 +1,16 @@
-FROM golang:1.26-trixie AS build
+FROM debian:trixie-slim AS build
 
-RUN apt-get update && apt-get install -y --no-install-recommends gcc-16 && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates curl libc6-dev && \
+    echo "deb http://deb.debian.org/debian unstable main" >> /etc/apt/sources.list.d/unstable.list && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends -t unstable gcc-16 && \
+    rm -rf /var/lib/apt/lists/* /etc/apt/sources.list.d/unstable.list
+
+ARG GO_VERSION=1.26.3
+RUN curl -fsSL https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz | tar -C /usr/local -xz
+ENV PATH="/usr/local/go/bin:${PATH}"
+
 RUN ln -sf /usr/bin/gcc-16 /usr/bin/cc
 
 WORKDIR /src
