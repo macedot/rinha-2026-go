@@ -19,7 +19,7 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=1 CC=gcc-16 go build -ldflags="-s -w" -o /app/server ./cmd/server
 RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /app/build_index ./cmd/build_index
-RUN gzip -dkc bridge/data/index.bin.gz > /app/resources/index.bin
+RUN mkdir -p /app/resources && gzip -dkc bridge/data/index.bin.gz > /app/resources/index.bin
 
 FROM debian:trixie-slim
 
