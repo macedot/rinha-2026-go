@@ -54,7 +54,7 @@ func main() {
 		MaxRequestBodySize:    32 * 1024,
 		ReadBufferSize:        16 * 1024,
 		WriteBufferSize:       16 * 1024,
-		DisableKeepalive:      false,
+		DisableKeepalive:      true,
 		TCPKeepalive:          true,
 		ReadTimeout:           0,
 		WriteTimeout:          0,
@@ -128,6 +128,7 @@ func handler(ctx *fasthttp.RequestCtx) {
 		ctx.SetStatusCode(200)
 		ctx.SetContentType("application/json")
 		ctx.Response.SetBodyRaw(httpresp.ScoreBody[votes])
+		ctx.SetConnectionClose()
 		return
 	default:
 		ctx.SetStatusCode(404)
