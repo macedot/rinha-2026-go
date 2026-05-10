@@ -1,7 +1,7 @@
 FROM debian:trixie-slim AS build
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates curl libc6-dev && \
+    apt-get install -y --no-install-recommends ca-certificates curl libc6-dev gzip && \
     echo "deb http://deb.debian.org/debian unstable main" >> /etc/apt/sources.list.d/unstable.list && \
     apt-get update && \
     apt-get install -y --no-install-recommends -t unstable gcc-16 && \
@@ -19,6 +19,7 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=1 CC=gcc-16 go build -ldflags="-s -w" -o /app/server ./cmd/server
 RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /app/build_index ./cmd/build_index
+RUN gzip -dkc bridge/data/index.bin.gz > /app/resources/index.bin
 
 FROM debian:trixie-slim
 
@@ -27,7 +28,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 WORKDIR /app
 COPY --from=build /app/server /app/server
 COPY --from=build /app/build_index /app/build_index
-COPY resources/index.bin /app/resources/index.bin
+COPY --from=build /app/resources/index.bin /app/resources/index.bin
 COPY resources/mcc_risk.json /app/resources/mcc_risk.json
 
 ENV INDEX_PATH=/app/resources/index.bin
