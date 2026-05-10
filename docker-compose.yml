@@ -29,6 +29,12 @@ x-api-common: &api-common
     MERCHANT_AMOUNT_DIVISOR: "10000"
     GOGC: "100"
     GOMEMLIMIT: "100MiB"
+  healthcheck:
+    test: ["CMD-SHELL", "test -S $$UDS_PATH"]
+    interval: 1s
+    timeout: 1s
+    retries: 30
+    start_period: 5s
 
 services:
   passa:
@@ -39,8 +45,10 @@ services:
     volumes:
       - rinha-go-sockets:/sockets
     depends_on:
-      - api1
-      - api2
+      api1:
+        condition: service_healthy
+      api2:
+        condition: service_healthy
     networks:
       - rinha-go-net
     security_opt:
