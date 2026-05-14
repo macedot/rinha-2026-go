@@ -1,30 +1,39 @@
-x-api-common: &api-common
-  build: .
-  volumes:
-    - rinha-go-sock:/run/sock
-  networks:
-    - rinha-go-net
-  ulimits:
-    nofile:
-      soft: 65535
-      hard: 65535
-  deploy:
-    resources:
-      limits:
-        cpus: "0.4"
-        memory: "150M"
-  environment: &api-env
-    INDEX_PATH: "/app/resources/index.bin"
-    UDS_PATH: "/run/sock/api.sock"
-    UDS_MODE: "666"
-    UNLINK_UDS: "1"
-    IVF_NPROBE: "8"
-    IVF_FULL_NPROBE: "24"
-    CANDIDATES: "0"
-  security_opt:
-    - seccomp:unconfined
-
 services:
+  api1: &api-common
+    image: ghcr.io/macedot/rinha-2026-go:v20260514203932
+    container_name: rinha-go-api1
+    restart: always
+    volumes:
+      - rinha-go-sock:/run/sock
+    networks:
+      - rinha-go-net
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    deploy:
+      resources:
+        limits:
+          cpus: "0.4"
+          memory: "150M"
+    environment: &api-env
+      INDEX_PATH: "/app/resources/index.bin"
+      UDS_PATH: "/run/sock/api1.sock"
+      UDS_MODE: "666"
+      UNLINK_UDS: "1"
+      IVF_NPROBE: "8"
+      IVF_FULL_NPROBE: "24"
+      CANDIDATES: "0"
+    security_opt:
+      - seccomp:unconfined
+
+  api2:
+    <<: *api-common
+    container_name: rinha-go-api2
+    environment:
+      <<: *api-env
+      UDS_PATH: "/run/sock/api2.sock"
+
   lb:
     image: jrblatt/so-no-forevis:v1.0.0
     container_name: rinha-go-lb
@@ -54,20 +63,6 @@ services:
         hard: 65535
     security_opt:
       - seccomp:unconfined
-
-  api1:
-    <<: *api-common
-    container_name: rinha-go-api1
-    environment:
-      <<: *api-env
-      UDS_PATH: "/run/sock/api1.sock"
-
-  api2:
-    <<: *api-common
-    container_name: rinha-go-api2
-    environment:
-      <<: *api-env
-      UDS_PATH: "/run/sock/api2.sock"
 
 networks:
   rinha-go-net:
