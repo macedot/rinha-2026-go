@@ -27,3 +27,6 @@
 
 # Scripts
 !autoresearch.sh
+
+!bridge/
+!bridge/**
