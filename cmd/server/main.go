@@ -93,15 +93,17 @@ func main() {
 }
 
 func handler(ctx *fasthttp.RequestCtx) {
-	path := ctx.Path()
-	if len(path) == 6 && path[0] == '/' && path[1] == 'r' && path[2] == 'e' && path[3] == 'a' && path[4] == 'd' && path[5] == 'y' {
+	switch string(ctx.Path()) {
+	case "/ready":
 		ctx.SetStatusCode(200)
 		ctx.Response.SetBodyRaw(httpresp.Ready)
 		return
-	}
-	// /fraud-score is 12 bytes
-	if len(path) == 12 && path[0] == '/' && path[6] == '-' && path[11] == 'e' {
-		// /fraud-score
+	case "/fraud-score":
+		if !ctx.IsPost() {
+			ctx.SetStatusCode(404)
+			ctx.Response.SetBodyRaw(httpresp.NotFound)
+			return
+		}
 		body := ctx.PostBody()
 		if len(body) == 0 {
 			ctx.SetStatusCode(400)
@@ -126,9 +128,10 @@ func handler(ctx *fasthttp.RequestCtx) {
 		ctx.SetContentType("application/json")
 		ctx.Response.SetBodyRaw(httpresp.ScoreBody[votes])
 		return
+	default:
+		ctx.SetStatusCode(404)
+		ctx.Response.SetBodyRaw(httpresp.NotFound)
 	}
-	ctx.SetStatusCode(404)
-	ctx.Response.SetBodyRaw(httpresp.NotFound)
 }
 
 func octalFromDecimal(mode int) int {
