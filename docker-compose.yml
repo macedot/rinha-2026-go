@@ -1,6 +1,6 @@
 services:
   api1: &api-common
-    image: ghcr.io/macedot/rinha-2026-go:v20260514203932
+    image: ghcr.io/macedot/rinha-2026-go:v0.0.1
     container_name: rinha-go-api1
     restart: always
     volumes:
