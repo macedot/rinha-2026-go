@@ -21,8 +21,8 @@ COPY --from=build /src/resources/mcc_risk.json /app/resources/mcc_risk.json
 ENV INDEX_PATH=/app/resources/index.bin
 ENV MCC_RISK_PATH=/app/resources/mcc_risk.json
 ENV LISTEN_TCP=0
-ENV IVF_NPROBE=32
-ENV IVF_FULL_NPROBE=8
+ENV IVF_NPROBE=8
+ENV IVF_FULL_NPROBE=24
 ENV CANDIDATES=0
 
 ENTRYPOINT ["/app/server"]
