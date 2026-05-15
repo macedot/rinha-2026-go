@@ -8,6 +8,7 @@ import (
 	"rinha-2026/internal/config"
 	"rinha-2026/internal/httpresp"
 	"rinha-2026/internal/ivfsearch"
+	"rinha-2026/internal/mccrisk"
 	"rinha-2026/internal/vectorizer"
 	"syscall"
 	"unsafe"
@@ -16,7 +17,10 @@ import (
 	"go.uber.org/automaxprocs/maxprocs"
 )
 
-var cfg *config.Config
+var (
+	cfg      *config.Config
+	mccTable *mccrisk.Table
+)
 
 func main() {
 	if _, err := maxprocs.Set(); err != nil {
@@ -24,39 +28,39 @@ func main() {
 	}
 	cfg = config.Load()
 	httpresp.Init()
+	mccTable = mccrisk.Load(cfg.MccRiskPath)
 
-	if err := ivfsearch.LoadIndex(cfg.IndexPath); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to load INDEX_PATH=%s\n", cfg.IndexPath)
+	if err := ivfsearch.BridgeLoadIndex(cfg.IndexPath); err != nil {
+		fmt.Fprintf(os.Stderr, "falha carregando INDEX_PATH=%s\n", cfg.IndexPath)
 		log.Fatal(err)
 	}
-	ivfsearch.SetParams(cfg.IvfNprobe, cfg.IvfFullNprobe, cfg.Candidates)
+	ivfsearch.BridgeSetParams(cfg.IvfNprobe, cfg.IvfFullNprobe, cfg.Candidates)
 
-	fmt.Fprintf(os.Stderr, "engine: pure Go IVF/kmeans + int16 + top5 seco (K=4096)\n")
-
-	// Warm CPU caches
-	{
-		var state uint32 = 0x12345678
-		for i := 0; i < 500; i++ {
-			var q [14]float32
-			for j := 0; j < 14; j++ {
-				state = state*1664525 + 1013904223
-				q[j] = float32(state>>8) / float32(1<<24)
-			}
-			ivfsearch.Search(q)
+	/* Warm CPU caches with random queries */
+	fmt.Fprintf(os.Stderr, "warming caches...\n")
+	for i := 0; i < 500; i++ {
+		q := [14]float32{
+			float32(i%10000) / 10000.0, float32(i%12) / 12.0,
+			float32(i%10) / 10.0, float32(i%24) / 23.0, float32(i%7) / 6.0,
+			-1.0, -1.0, float32(i%1000) / 1000.0, float32(i%20) / 20.0,
+			0.0, 1.0, 1.0, 0.5, float32(i%10000) / 10000.0,
 		}
+		ivfsearch.BridgeSearch(q)
 	}
 	fmt.Fprintf(os.Stderr, "cache warmup done\n")
+
+	fmt.Fprintf(os.Stderr, "engine: IVF/kmeans + int16 + top5 seco + C/AVX2 bridge (K=4096)\n")
 
 	s := &fasthttp.Server{
 		Handler:               handler,
 		MaxRequestBodySize:    32 * 1024,
 		ReadBufferSize:        16 * 1024,
 		WriteBufferSize:       16 * 1024,
-		DisableKeepalive:      false,
-		TCPKeepalive:          false,
+		DisableKeepalive:      true,
+		TCPKeepalive:          true,
 		ReadTimeout:           0,
 		WriteTimeout:          0,
-		IdleTimeout:           0,
+		IdleTimeout:           60,
 		NoDefaultServerHeader: true,
 		ReduceMemoryUsage:     false,
 	}
@@ -65,7 +69,7 @@ func main() {
 		os.Remove(cfg.UDSPath)
 	}
 
-	// Main UDS socket for health checks / direct connections
+	/* Main UDS socket for health checks / direct connections */
 	mainLn, err := net.Listen("unix", cfg.UDSPath)
 	if err != nil {
 		log.Fatalf("listen uds: %v", err)
@@ -77,7 +81,7 @@ func main() {
 	}
 	fmt.Fprintf(os.Stderr, "listening UDS %s mode=%d\n", cfg.UDSPath, cfg.UDSMode)
 
-	// SCM_RIGHTS ctrl socket for SoNoForevis LB fd passing
+	/* SCM_RIGHTS ctrl socket for SoNoForevis LB fd passing */
 	ctrlLn, err := NewSCMRightsListener(cfg.UDSPath)
 	if err != nil {
 		log.Fatalf("listen ctrl: %v", err)
@@ -85,7 +89,7 @@ func main() {
 	defer ctrlLn.Close()
 	fmt.Fprintf(os.Stderr, "listening ctrl %s.ctrl\n", cfg.UDSPath)
 
-	// Serve on both listeners concurrently
+	/* Serve on both listeners concurrently */
 	go func() {
 		log.Fatal(s.Serve(mainLn))
 	}()
@@ -102,6 +106,7 @@ func handler(ctx *fasthttp.RequestCtx) {
 		if !ctx.IsPost() {
 			ctx.SetStatusCode(404)
 			ctx.Response.SetBodyRaw(httpresp.NotFound)
+			ctx.SetConnectionClose()
 			return
 		}
 		body := ctx.PostBody()
@@ -109,28 +114,33 @@ func handler(ctx *fasthttp.RequestCtx) {
 			ctx.SetStatusCode(400)
 			ctx.SetContentType("application/json")
 			ctx.Response.SetBodyRaw(httpresp.BadRequest)
+			ctx.SetConnectionClose()
 			return
 		}
-		q, ok := vectorizer.Build(body)
+		q, ok := vectorizer.Build(body, cfg, mccTable)
 		if !ok {
 			ctx.SetStatusCode(400)
 			ctx.SetContentType("application/json")
 			ctx.Response.SetBodyRaw(httpresp.BadRequest)
+			ctx.SetConnectionClose()
 			return
 		}
-		votes := ivfsearch.Search(q)
+		votes := ivfsearch.BridgeSearch(q)
 		if votes < 0 || votes > 5 {
 			ctx.SetStatusCode(500)
 			ctx.Response.SetBodyRaw(httpresp.InternalError)
+			ctx.SetConnectionClose()
 			return
 		}
 		ctx.SetStatusCode(200)
 		ctx.SetContentType("application/json")
 		ctx.Response.SetBodyRaw(httpresp.ScoreBody[votes])
+		ctx.SetConnectionClose()
 		return
 	default:
 		ctx.SetStatusCode(404)
 		ctx.Response.SetBodyRaw(httpresp.NotFound)
+		ctx.SetConnectionClose()
 	}
 }
 
@@ -141,12 +151,11 @@ func octalFromDecimal(mode int) int {
 	return (a << 6) | (b << 3) | c
 }
 
-// === SCM_RIGHTS listener for SoNoForevis v1.0.0 ===
+/* === SCM_RIGHTS listener for SoNoForevis v1.0.0 === */
 
 type SCMRightsListener struct {
 	ctrlPath string
 	ctrlLn   net.Listener
-	ctrlConn net.Conn
 }
 
 func NewSCMRightsListener(basePath string) (*SCMRightsListener, error) {
@@ -161,26 +170,16 @@ func NewSCMRightsListener(basePath string) (*SCMRightsListener, error) {
 
 func (l *SCMRightsListener) Accept() (net.Conn, error) {
 	for {
-		// If no active ctrl connection, accept one
-		if l.ctrlConn == nil {
-			conn, err := l.ctrlLn.Accept()
-			if err != nil {
-				return nil, err
-			}
-			l.ctrlConn = conn
-		}
-
-		// Try to receive an FD from the active ctrl connection
-		fd, err := recvFD(l.ctrlConn)
+		conn, err := l.ctrlLn.Accept()
 		if err != nil {
-			// Ctrl connection closed or error, accept a new one next time
-			l.ctrlConn.Close()
-			l.ctrlConn = nil
+			return nil, err
+		}
+		fd, err := recvFD(conn)
+		if err != nil {
+			conn.Close()
 			continue
 		}
-
-		// Set non-blocking (required for fasthttp)
-		syscall.SetNonblock(fd, true)
+		conn.Close()
 
 		f := os.NewFile(uintptr(fd), "scmd")
 		netConn, err := net.FileConn(f)
@@ -215,8 +214,6 @@ func recvFD(conn net.Conn) (int, error) {
 	var fd int
 	var recvErr error
 	raw.Control(func(f uintptr) {
-		// Make blocking for recvmsg
-		syscall.SetNonblock(int(f), false)
 		fd, recvErr = recvFDRaw(int(f))
 	})
 	if recvErr != nil {
