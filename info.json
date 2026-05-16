@@ -7,9 +7,7 @@
     ],
     "source-code-repo": "https://github.com/macedot/rinha-2026-go",
     "stack": [
-        "go",
-        "passa",
-        "c"
+        "go"
     ],
     "open_to_work": false
 }
